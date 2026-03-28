@@ -1,0 +1,5 @@
+{
+  "name": "Web Video Animator",
+  "description": "A web-based tool to animate images and audio, and export as video. Can be packaged as an .exe using Electron.",
+  "requestFramePermissions": []
+}

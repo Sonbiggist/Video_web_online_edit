@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Download, Play, Pause, Image as ImageIcon, Music, Trash2, Info, Settings, Video, Layers, Zap, ChevronUp, ChevronDown, Plus, ArrowUp, ArrowDown, SunMedium, Sparkles, Moon, MousePointer2, Lightbulb, Type } from 'lucide-react';
-import { ImageItem, AudioItem, ActionButton, LightItem, TextItem } from './types';
+import { ImageItem, AudioItem, ActionButton, LightItem, TextItem, VideoItem } from './types';
 
 export default function App() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [texts, setTexts] = useState<TextItem[]>([]);
+  const [videos, setVideos] = useState<VideoItem[]>([]);
   const [lights, setLights] = useState<LightItem[]>([]);
   const [audioItem, setAudioItem] = useState<AudioItem | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -57,6 +58,61 @@ export default function App() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     const elapsed = elapsedRef.current;
+
+    // Draw videos
+    videos.forEach(item => {
+      ctx.save();
+      
+      let dx = 0;
+      let dy = 0;
+      let rotation = 0;
+      let scale = 1;
+
+      if (item.animationType !== 'none') {
+        const durationMs = item.duration * 1000;
+        let t = 0;
+        if (item.loop) {
+          t = (elapsed % durationMs) / durationMs;
+        } else {
+          t = Math.min(elapsed / durationMs, 1);
+        }
+        
+        if (item.animationType === 'shake') {
+          rotation = Math.sin(t * Math.PI * 2 * 5) * 0.15 * item.amplitude;
+        } else if (item.animationType === 'spin') {
+          rotation = t * Math.PI * 2 * item.amplitude;
+        } else if (item.animationType === 'bounce') {
+          dy = -Math.abs(Math.sin(t * Math.PI * 2 * 2)) * 60 * item.amplitude;
+        } else if (item.animationType === 'float') {
+          dy = Math.sin(t * Math.PI * 2) * 20 * item.amplitude;
+        } else if (item.animationType === 'moveLeftRight') {
+          dx = Math.sin(t * Math.PI * 2) * 100 * item.amplitude;
+        }
+      }
+
+      ctx.translate(item.x + dx, item.y + dy);
+      ctx.rotate(rotation);
+      ctx.scale(scale, scale);
+      
+      if (item.brightness !== 100) {
+        ctx.filter = `brightness(${item.brightness}%)`;
+      }
+      
+      ctx.drawImage(item.videoElement, -item.width / 2, -item.height / 2, item.width, item.height);
+      
+      ctx.filter = 'none';
+
+      // Draw selection border
+      if (item.id === selectedId && !isRecording) {
+        ctx.strokeStyle = '#a855f7'; // purple-500
+        ctx.lineWidth = 3;
+        ctx.setLineDash([8, 8]);
+        ctx.strokeRect(-item.width / 2 - 2, -item.height / 2 - 2, item.width + 4, item.height + 4);
+        ctx.setLineDash([]);
+      }
+      
+      ctx.restore();
+    });
 
     // Draw images
     images.forEach(item => {
@@ -383,6 +439,17 @@ export default function App() {
       }
     }
 
+    // Then check videos
+    for (let i = videos.length - 1; i >= 0; i--) {
+      const vid = videos[i];
+      if (x >= vid.x - vid.width/2 && x <= vid.x + vid.width/2 && y >= vid.y - vid.height/2 && y <= vid.y + vid.height/2) {
+        setSelectedId(vid.id);
+        setIsDragging(true);
+        setDragOffset({ x: x - vid.x, y: y - vid.y });
+        return;
+      }
+    }
+
     // Then check images
     for (let i = images.length - 1; i >= 0; i--) {
       const img = images[i];
@@ -407,6 +474,11 @@ export default function App() {
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
+    setVideos(prev => prev.map(vid => 
+      vid.id === selectedId 
+        ? { ...vid, x: x - dragOffset.x, y: y - dragOffset.y }
+        : vid
+    ));
     setImages(prev => prev.map(img => 
       img.id === selectedId 
         ? { ...img, x: x - dragOffset.x, y: y - dragOffset.y }
@@ -474,6 +546,53 @@ export default function App() {
     e.target.value = '';
   };
 
+  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    
+    Array.from(files).forEach((file: File) => {
+      const url = URL.createObjectURL(file);
+      const video = document.createElement('video');
+      video.src = url;
+      video.loop = true;
+      video.muted = true; // Mute by default for autoplay
+      video.playsInline = true;
+      
+      video.onloadedmetadata = () => {
+        let w = video.videoWidth;
+        let h = video.videoHeight;
+        const max = 400;
+        if (w > max || h > max) {
+          const ratio = Math.min(max / w, max / h);
+          w *= ratio;
+          h *= ratio;
+        }
+        
+        const newItem: VideoItem = {
+          id: Math.random().toString(36).substr(2, 9),
+          url,
+          videoElement: video,
+          x: CANVAS_WIDTH / 2 - w / 2,
+          y: CANVAS_HEIGHT / 2 - h / 2,
+          width: w,
+          height: h,
+          animationType: 'none',
+          duration: 5,
+          amplitude: 1.0,
+          loop: true,
+          brightness: 100,
+          name: file.name
+        };
+        setVideos(prev => [...prev, newItem]);
+        setSelectedId(newItem.id);
+        if (isPlaying || isRecording) {
+          video.play().catch(e => console.log("Autoplay prevented", e));
+        }
+      };
+    });
+    e.target.value = '';
+  };
+
   const handleAltImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -526,6 +645,45 @@ export default function App() {
     const newImages = [...images];
     [newImages[index], newImages[index-1]] = [newImages[index-1], newImages[index]];
     setImages(newImages);
+  };
+
+  const updateVideo = (id: string, updates: Partial<VideoItem>) => {
+    setVideos(prev => prev.map(vid => {
+      if (vid.id === id) {
+        if (updates.loop !== undefined) {
+          vid.videoElement.loop = updates.loop;
+        }
+        return { ...vid, ...updates };
+      }
+      return vid;
+    }));
+  };
+
+  const deleteVideo = (id: string) => {
+    setVideos(prev => prev.map(vid => {
+      if (vid.id === id) {
+        vid.videoElement.pause();
+        vid.videoElement.removeAttribute('src');
+        vid.videoElement.load();
+        URL.revokeObjectURL(vid.url);
+      }
+      return vid;
+    }).filter(vid => vid.id !== id));
+    if (selectedId === id) setSelectedId(null);
+  };
+
+  const moveVideoUp = (index: number) => {
+    if (index === videos.length - 1) return;
+    const newVids = [...videos];
+    [newVids[index], newVids[index+1]] = [newVids[index+1], newVids[index]];
+    setVideos(newVids);
+  };
+
+  const moveVideoDown = (index: number) => {
+    if (index === 0) return;
+    const newVids = [...videos];
+    [newVids[index], newVids[index-1]] = [newVids[index-1], newVids[index]];
+    setVideos(newVids);
   };
 
   const createText = () => {
@@ -708,6 +866,16 @@ export default function App() {
     }, 100);
   };
 
+  useEffect(() => {
+    videos.forEach(v => {
+      if (isPlaying || isRecording) {
+        v.videoElement.play().catch(e => console.log("Autoplay prevented", e));
+      } else {
+        v.videoElement.pause();
+      }
+    });
+  }, [isPlaying, isRecording, videos]);
+
   return (
     <div className="flex h-screen bg-neutral-950 text-neutral-100 font-sans overflow-hidden">
       {/* Sidebar */}
@@ -750,11 +918,16 @@ export default function App() {
             <>
               <div className="space-y-3">
                 <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider">Thêm nội dung</h2>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-2">
                   <label className="flex flex-col items-center justify-center p-3 bg-neutral-800 hover:bg-neutral-700 rounded-lg cursor-pointer transition-colors border border-neutral-700">
                     <ImageIcon className="w-5 h-5 mb-1 text-blue-400" />
                     <span className="text-xs font-medium">Ảnh</span>
                     <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
+                  </label>
+                  <label className="flex flex-col items-center justify-center p-3 bg-neutral-800 hover:bg-neutral-700 rounded-lg cursor-pointer transition-colors border border-neutral-700">
+                    <Video className="w-5 h-5 mb-1 text-orange-400" />
+                    <span className="text-xs font-medium">Video</span>
+                    <input type="file" accept="video/*" multiple className="hidden" onChange={handleVideoUpload} />
                   </label>
                   <button onClick={createText} className="flex flex-col items-center justify-center p-3 bg-neutral-800 hover:bg-neutral-700 rounded-lg cursor-pointer transition-colors border border-neutral-700">
                     <Type className="w-5 h-5 mb-1 text-green-400" />
@@ -902,6 +1075,87 @@ export default function App() {
                               )}
                             </div>
 
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider">Danh sách Video</h2>
+                {videos.length === 0 ? (
+                  <div className="text-center p-6 border border-dashed border-neutral-700 rounded-lg text-neutral-500 text-sm">
+                    Chưa có video nào.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {videos.map((vid, index) => (
+                      <div 
+                        key={vid.id} 
+                        className={`p-3 rounded-lg border transition-colors cursor-pointer ${selectedId === vid.id ? 'bg-neutral-800 border-orange-500' : 'bg-neutral-800/50 border-neutral-700 hover:border-neutral-600'}`}
+                        onClick={() => setSelectedId(vid.id)}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            <div className="w-8 h-8 rounded bg-neutral-700 overflow-hidden shrink-0 flex items-center justify-center">
+                              <Video className="w-4 h-4 text-orange-400" />
+                            </div>
+                            <span className="text-sm truncate">{vid.name}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button onClick={(e) => { e.stopPropagation(); moveVideoUp(index); }} disabled={index === videos.length - 1} className="text-neutral-400 hover:text-white disabled:opacity-30 p-1"><ArrowDown className="w-4 h-4" /></button>
+                            <button onClick={(e) => { e.stopPropagation(); moveVideoDown(index); }} disabled={index === 0} className="text-neutral-400 hover:text-white disabled:opacity-30 p-1"><ArrowUp className="w-4 h-4" /></button>
+                            <button onClick={(e) => { e.stopPropagation(); deleteVideo(vid.id); }} className="text-neutral-400 hover:text-red-400 p-1"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        </div>
+                        
+                        {selectedId === vid.id && (
+                          <div className="space-y-4 mt-3 pt-3 border-t border-neutral-700" onClick={e => e.stopPropagation()}>
+                            {/* Video Settings */}
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[10px] text-neutral-400 mb-1">Độ sáng (%)</label>
+                                <input type="number" min="0" max="200" value={vid.brightness} onChange={(e) => updateVideo(vid.id, { brightness: parseInt(e.target.value) || 100 })} className="w-full bg-neutral-900 border border-neutral-700 rounded p-1.5 text-xs outline-none focus:border-orange-500" />
+                              </div>
+                              <div className="flex items-end pb-1">
+                                <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer">
+                                  <input type="checkbox" checked={vid.loop} onChange={(e) => updateVideo(vid.id, { loop: e.target.checked })} className="rounded bg-neutral-900 border-neutral-700 text-orange-500 focus:ring-orange-500" />
+                                  Lặp lại (Loop)
+                                </label>
+                              </div>
+                            </div>
+
+                            {/* Animation Settings */}
+                            <div>
+                              <label className="block text-xs text-neutral-400 mb-1 font-semibold">Chuyển động</label>
+                              <select 
+                                value={vid.animationType}
+                                onChange={(e) => updateVideo(vid.id, { animationType: e.target.value as any })}
+                                className="w-full bg-neutral-900 border border-neutral-700 rounded p-1.5 text-sm focus:border-orange-500 outline-none mb-2"
+                              >
+                                <option value="none">Không có</option>
+                                <option value="shake">Lắc (Shake)</option>
+                                <option value="spin">Xoay (Spin)</option>
+                                <option value="bounce">Nảy (Bounce)</option>
+                                <option value="float">Trôi (Float)</option>
+                                <option value="moveLeftRight">Di chuyển Trái-Phải</option>
+                              </select>
+                              
+                              {vid.animationType !== 'none' && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-[10px] text-neutral-400 mb-1">Thời gian (s)</label>
+                                    <input type="number" min="0.1" step="0.1" value={vid.duration} onChange={(e) => updateVideo(vid.id, { duration: parseFloat(e.target.value) || 1 })} className="w-full bg-neutral-900 border border-neutral-700 rounded p-1.5 text-xs outline-none" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] text-neutral-400 mb-1">Biên độ (x)</label>
+                                    <input type="number" min="0.1" max="5" step="0.1" value={vid.amplitude} onChange={(e) => updateVideo(vid.id, { amplitude: parseFloat(e.target.value) || 1 })} className="w-full bg-neutral-900 border border-neutral-700 rounded p-1.5 text-xs outline-none" />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>

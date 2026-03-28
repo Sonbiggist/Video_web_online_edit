@@ -61,6 +61,22 @@ export interface TextItem {
   name: string;
 }
 
+export interface VideoItem {
+  id: string;
+  url: string;
+  videoElement: HTMLVideoElement;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  animationType: 'none' | 'shake' | 'spin' | 'bounce' | 'float' | 'moveLeftRight';
+  duration: number;
+  amplitude: number;
+  loop: boolean;
+  brightness: number; // 0-200%
+  name: string;
+}
+
 export interface LightItem {
   id: string;
   x: number;
